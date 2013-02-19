@@ -7,11 +7,11 @@ import           Control.Applicative
 import           Data.Attoparsec.Text as A
 import           Data.Monoid
 import           Data.Text
-import           Data.Vector
+import           Data.Vector as V
 
 
 -- TODO ! and unbox
-data Vertex = Vertex Double Double Double deriving (Eq, Show)
+data Vertex = Vertex !Double !Double !Double deriving (Eq, Show)
 data Polygon = Polygon (Vector Int) deriving (Eq, Show)
 data TextureCoordinate = TextureCoordinate Double Double deriving (Eq, Show)
 
@@ -54,17 +54,17 @@ vtkParser = do
   desc <- endl <* ("ASCII" *> endl *> "DATASET POLYDATA" *> endl)
   -- Parse points
   nPoints <- "POINTS " .*> decimal <*. " float" <* endl
-  verts <- A.count nPoints (vertexParser <* skipSpace)
+  verts <- V.replicateM nPoints (vertexParser <* skipSpace)
   -- Parse polygons
   nPolys <- "POLYGONS " .*> decimal <* endl
-  polys <- A.count nPolys (polygonParser <* endl)
+  polys <- V.replicateM nPolys (polygonParser <* endl)
   -- Parse texture coordinates
   nTextures <- "POINT_DATA " *> decimal <* endl
   _ <- endl -- TEXTURE COORDINATES line
   when (nTextures /= nPoints) $ error "number of textures and points mismatch"
-  texts <- A.count nTextures textureCoordParser
+  texts <- V.replicateM nTextures textureCoordParser
   -- Done
-  return $ VTK desc (fromList verts) (fromList polys) (fromList texts)
+  return $ VTK desc verts polys texts
   where
     endl = takeTill isEndOfLine <* endOfLine
     sd = signed double <* skipSpace
