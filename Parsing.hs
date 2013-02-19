@@ -31,7 +31,7 @@ derivingUnbox "Vertex"
 
 instance Monoid Vertex where
   mempty = Vertex 0 0 0
-  Vertex x y z `mappend` Vertex x' y' z' = Vertex (x+x') (y+y') (z+z')
+  mappend = (+++)
 
 
 vmap :: (Double -> Double) -> Vertex -> Vertex
