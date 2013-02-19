@@ -6,8 +6,9 @@ import           Data.Attoparsec.Text as A
 import           Data.Monoid
 import qualified Data.Text.IO as Text
 import qualified Data.Vector as V
-import           Data.Vector ((!), create)
-import qualified Data.Vector.Mutable as VM
+import qualified Data.Vector.Unboxed as U
+import           Data.Vector.Unboxed ((!))
+import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Graphics.Rendering.OpenGL.GL
 import           Graphics.UI.GLUT as GL
 import           System.Environment
@@ -41,8 +42,8 @@ initGL = do
   -- depthFunc $= Just Lequal
 
 
-changeVector :: PrimMonad m => VM.MVector (PrimState m) a -> Int -> (a -> a) -> m ()
-changeVector v i f = VM.read v i >>= (VM.write v i . f)
+changeVector :: (VUM.Unbox a, PrimMonad m) => VUM.MVector (PrimState m) a -> Int -> (a -> a) -> m ()
+changeVector v i f = VUM.read v i >>= (VUM.write v i . f)
 
 
 display :: VTK -> VertexNormals -> DisplayCallback
@@ -51,7 +52,7 @@ display (VTK { polygons, vertices }) vertexNormals = do
   putStrLn "display"
 
   V.forM_ polygons $ \(Input.Polygon p) -> renderPrimitive GL.Polygon $ do
-    V.forM_ p $ \iVertex -> do
+    U.forM_ p $ \iVertex -> do
       let Vertex v1 v2 v3 = vertices      ! iVertex
       let Vertex n1 n2 n3 = vertexNormals ! iVertex
       normal (Normal3 (realToFrac n1) (realToFrac n2) (realToFrac n3) :: Normal3 GLdouble)
@@ -108,17 +109,17 @@ specialKeyboard vtk vertexNormals key (Position _x _y) = case key of
   c       -> putStrLn $ "special key code " ++ show c
 
 
-type VertexNormals = V.Vector Input.Vertex
+type VertexNormals = U.Vector Input.Vertex
 
 calculateVertexNormals :: VTK -> VertexNormals
-calculateVertexNormals VTK { vertices, polygons } = create $ do
-  normalSums <- VM.replicate (V.length vertices) mempty
+calculateVertexNormals VTK { vertices, polygons } = U.create $ do
+  normalSums <- VUM.replicate (U.length vertices) mempty
   V.forM_ polygons $ \(Input.Polygon p) -> do
     let a = vertices ! (p ! 0)
         b = vertices ! (p ! 1)
         c = vertices ! (p ! 2)
         n = vnormal $ cross (b +-+ a) (c +-+ a)
-    V.forM_ p $ \iVertex ->
+    U.forM_ p $ \iVertex ->
       changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk
   return normalSums
 

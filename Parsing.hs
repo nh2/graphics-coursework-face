@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, TypeFamilies, MultiParamTypeClasses, TemplateHaskell #-}
 
 module Parsing where
 
@@ -9,11 +10,23 @@ import           Data.Monoid
 import           Data.Text
 import           Data.Vector as V
 
+import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Generic
+import qualified Data.Vector.Generic.Mutable
+
+import Data.Vector.Unboxed.Deriving
+
 
 -- TODO ! and unbox
-data Vertex = Vertex !Double !Double !Double deriving (Eq, Show)
-data Polygon = Polygon (Vector Int) deriving (Eq, Show)
+data Vertex = Vertex {-# UNPACK #-} !Double {-# UNPACK #-} !Double {-# UNPACK #-} !Double deriving (Eq, Show)
+data Polygon = Polygon (U.Vector Int) deriving (Eq, Show)
 data TextureCoordinate = TextureCoordinate Double Double deriving (Eq, Show)
+
+
+derivingUnbox "Vertex"
+    [t| Vertex -> (Double, Double, Double) |]
+    [| \ (Vertex a b c) -> (a, b, c) |]
+    [| \ (a, b, c) -> Vertex a b c |]
 
 
 instance Monoid Vertex where
@@ -40,7 +53,7 @@ Vertex a b c `cross` Vertex x y z = Vertex (b * z - c * y)
 
 data VTK = VTK
   { description :: Text
-  , vertices :: Vector Vertex
+  , vertices :: U.Vector Vertex
   , polygons :: Vector Polygon
   , textures :: Vector TextureCoordinate
   } deriving (Eq, Show)
@@ -54,7 +67,7 @@ vtkParser = do
   desc <- endl <* ("ASCII" *> endl *> "DATASET POLYDATA" *> endl)
   -- Parse points
   nPoints <- "POINTS " .*> decimal <*. " float" <* endl
-  verts <- V.replicateM nPoints (vertexParser <* skipSpace)
+  verts <- U.replicateM nPoints (vertexParser <* skipSpace)
   -- Parse polygons
   nPolys <- "POLYGONS " .*> decimal <* endl
   polys <- V.replicateM nPolys (polygonParser <* endl)
@@ -73,5 +86,5 @@ vtkParser = do
     vertexParser = Vertex <$> sd <*> sd <*> sd
     polygonParser = do
       size <- decimal
-      Polygon . fromList <$> A.count size (skipSpace *> decimal)
+      Polygon <$> U.replicateM size (skipSpace *> decimal)
     textureCoordParser = TextureCoordinate <$> (skipSpace *> double) <*> (skipSpace *> double)
