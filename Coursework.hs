@@ -18,6 +18,10 @@ import           System.Exit
 import           Parsing as Input
 
 
+deg :: (Num a, Floating a) => a
+deg = 2 * pi / 180
+
+
 initGL :: IO ()
 initGL = do
   clearColor $= Color4 0 0 0 0
@@ -28,10 +32,10 @@ initGL = do
   -- Enable lighting
   lighting        $= Enabled
   light (Light 0) $= Enabled
-  position (Light 0) $= Vertex4 1 1 1 0
-  -- ambient  (Light 0) $= Color4 0 1 0 0
-  -- diffuse  (Light 0) $= Color4 0 1 0 0
-  -- specular (Light 0) $= Color4 0 1 0 0
+  position (Light 0) $= Vertex4 1 1 1 0.1
+  -- ambient  (Light 0) $= Color4 1 1 1 0
+  -- diffuse  (Light 0) $= Color4 1 1 1 0
+  -- specular (Light 0) $= Color4 1 1 1 0
 
   -- Set material parameters
   -- materialSpecular  FrontAndBack $= Color4 1 0 0 0
@@ -64,29 +68,14 @@ display (VTK { polygons, vertices }) vertexNormals = do
   -- swapBuffers
   putStrLn "drawing done"
 
-  {-
-  -- for all polygons
-     renderPrimitive Polygon $ do
-       -- for all vertices of polygon
-          -- Define texture coordinates of vertex
-          texCoord (TexCoord2 0 0 :: TexCoord2 GLfloat)
-          -- Define normal of vertex
-          normal (Normal3 0 0 0 :: Normal3 GLfloat)
-          -- Define coordinates of vertex
-          vertex (Vertex3 0 0 0 :: Vertex3 GLfloat)
-  flush
-  -- or, if double buffering is used,
-  -- swapBuffers
-  -}
 
-
-reshape :: VTK -> Vertex3 GLdouble -> IORef Input.Vertex -> ReshapeCallback
-reshape vtk core eyeRef size = do
+reshape :: State -> ReshapeCallback
+reshape state size = do
   putStrLn "reshape"
 
   viewport $= (Position 0 0, size)
 
-  transform core eyeRef
+  transform state
 
 
 keyboard :: KeyboardCallback
@@ -95,42 +84,39 @@ keyboard key (Position _x _y) = case key of
   c      -> putStrLn $ "key code " ++ show c
 
 
-specialKeyboard :: VTK -> Vertex3 GLdouble -> IORef Input.Vertex -> SpecialCallback
-specialKeyboard vtk core eyeRef key (Position _x _y) = do
+specialKeyboard :: State -> SpecialCallback
+specialKeyboard state@State { horizAngleVar, vertAngleVar } key (Position _x _y) = do
   case key of
-    KeyDown -> modifyIORef eyeRef (+++ Vertex 2 0 0)
-    KeyUp   -> modifyIORef eyeRef (+++ Vertex (-2) 0 0)
-    -- KeyLeft -> modifyIORef eyeRef (+++ Vertex 0 2 0)
-    -- KeyRight -> modifyIORef eyeRef (+++ Vertex 0 (-2) 0)
-    KeyLeft -> modifyIORef eyeRef (+++ Vertex 0 0 2)
-    KeyRight -> modifyIORef eyeRef (+++ Vertex 0 0 (-2))
+    KeyLeft  -> horizAngleVar $~! (+    2 *deg )
+    KeyRight -> horizAngleVar $~! (+ (- 2 *deg))
+    KeyUp    -> vertAngleVar  $~! (+    2 *deg )
+    KeyDown  -> vertAngleVar  $~! (+ (- 2 *deg))
 
-    c       -> putStrLn $ "special key code " ++ show c
+    c        -> putStrLn $ "special key code " ++ show c
 
-  transform core eyeRef
+  transform state
   postRedisplay Nothing
 
 
-transform :: Vertex3 GLdouble -> IORef Input.Vertex -> IO ()
-transform core eyeRef = do
+transform :: State -> IO ()
+transform State { horizAngleVar, vertAngleVar, distanceVar, centerVar } = do
 
-  eye@(Vertex eyex eyey eyez) <- readIORef eyeRef
-
-  putStrLn $ "KeyLeft " ++ show eye
-
-  let f = realToFrac
+  horizAngle <- get horizAngleVar
+  vertAngle  <- get vertAngleVar
+  d          <- get distanceVar
+  center     <- get centerVar
+  let eye = realToFrac <$> Vertex3 (d * sin horizAngle)
+                                   (d * sin vertAngle )
+                                   (d * cos horizAngle)
 
   matrixMode $= Projection
   loadIdentity
-  perspective 2 2 1 200
+  perspective 1 2 1 200
 
   matrixMode $= Modelview 0
   loadIdentity
-  lookAt (Vertex3 (f eyex) (f eyey) (f eyez)) core (Vector3 0 1 0)
+  lookAt eye center (Vector3 0 1 0)
 
-
-
-type VertexNormals = U.Vector Input.Vertex
 
 calculateVertexNormals :: VTK -> VertexNormals
 calculateVertexNormals VTK { vertices, polygons } = U.create $ do
@@ -165,20 +151,32 @@ initGraphics progName args vtk = do
 
   -- Average center vertex
   let VTK { vertices } = vtk
-      num  = fromIntegral (U.length vertices)
-      Vertex a b c = (/ num) `vmap` (U.foldl' (+++) mempty vertices)
-      f = realToFrac
-      core = Vertex3 (f a) (f b) (f c)
-  eyeRef <- newIORef (Vertex 10 0 0)
+      num              = fromIntegral (U.length vertices)
+      Vertex a b c     = (/ num) `vmap` (U.foldl' (+++) mempty vertices)
+      f                = realToFrac
+      center           = Vertex3 (f a) (f b) (f c)
+
+  -- Initialize global variables
+  state <- State <$> newIORef (30 *deg) <*> newIORef 0 <*> newIORef 20 <*> newIORef center
 
   -- Initialize callback functions
   displayCallback $= display vtk vertexNormals
-  reshapeCallback $= Just (reshape vtk core eyeRef)
+  reshapeCallback $= Just (reshape state)
   keyboardCallback $= Just keyboard
-  specialCallback $= Just (specialKeyboard vtk core eyeRef)
+  specialCallback $= Just (specialKeyboard state)
 
   -- Start renderingdisplay
   mainLoop
+
+
+type VertexNormals = U.Vector Input.Vertex
+
+data State = State
+  { horizAngleVar :: IORef Double
+  , vertAngleVar :: IORef Double
+  , distanceVar :: IORef Double
+  , centerVar :: IORef (Vertex3 GLdouble)
+  }
 
 
 main :: IO ()
