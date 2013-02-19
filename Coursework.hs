@@ -5,7 +5,8 @@ import           Control.Monad.Primitive
 import           Data.Attoparsec.Text as A
 import           Data.Monoid
 import qualified Data.Text.IO as Text
-import           Data.Vector as V
+import qualified Data.Vector as V
+import           Data.Vector ((!), create)
 import qualified Data.Vector.Mutable as VM
 import           Graphics.Rendering.OpenGL.GL
 import           Graphics.UI.GLUT as GL
@@ -20,26 +21,24 @@ initGL = do
   clearColor $= Color4 0 0 0 0
   putStrLn "init"
 
-  {-
   shadeModel $= Smooth
 
   -- Enable lighting
   lighting        $= Enabled
   light (Light 0) $= Enabled
-  position (Light 0) $= Vertex4 0 0 0 0
-  ambient  (Light 0) $= Color4 0 0 0 0
-  diffuse  (Light 0) $= Color4 0 0 0 0
-  specular (Light 0) $= Color4 0 0 0 0
+  position (Light 0) $= Vertex4 0 1 0 0
+  -- ambient  (Light 0) $= Color4 0 1 0 0
+  -- diffuse  (Light 0) $= Color4 0 1 0 0
+  -- specular (Light 0) $= Color4 0 1 0 0
 
   -- Set material parameters
-  materialSpecular  FrontAndBack $= Color4 0 0 0 0
-  materialShininess FrontAndBack $= 0
+  materialSpecular  FrontAndBack $= Color4 1 0 0 0
+  materialShininess FrontAndBack $= 1
 
   -- Enable Z-buffering
   -- equivalent of glEnable(GL_DEPTH_TEST)
-  depthMask $= Enabled
-  depthFunc $= Just Lequal
-  -}
+  -- depthMask $= Enabled
+  -- depthFunc $= Just Lequal
 
 
 changeVector :: PrimMonad m => VM.MVector (PrimState m) a -> Int -> (a -> a) -> m ()
@@ -64,6 +63,7 @@ display vtk = do
             changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk
         return normalSums
 
+  putStrLn "draw"
   -- TODO normalize vertexNormals?
 
   V.forM_ polygons $ \(Input.Polygon p) -> renderPrimitive GL.Polygon $ do
@@ -110,7 +110,17 @@ reshape size = do
 keyboard :: KeyboardCallback
 keyboard key (Position _x _y) = case key of
   '\ESC' -> exitSuccess
-  _      -> return ()
+  c      -> putStrLn $ "key code " ++ show c
+
+
+specialKeyboard :: VTK -> SpecialCallback
+specialKeyboard vtk key (Position _x _y) = case key of
+  KeyLeft -> do
+    matrixMode $= Projection
+    -- loadIdentity
+    rotate (- 5.0) (Vector3 0 1 0 :: Vector3 GLfloat)
+    display vtk
+  c       -> putStrLn $ "special key code " ++ show c
 
 
 initGraphics :: String -> [String] -> VTK -> IO ()
@@ -133,6 +143,7 @@ initGraphics progName args vtk = do
   displayCallback $= display vtk
   reshapeCallback $= Just reshape
   keyboardCallback $= Just keyboard
+  specialCallback $= Just (specialKeyboard vtk)
 
   -- Start renderingdisplay
   mainLoop
