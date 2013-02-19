@@ -45,26 +45,10 @@ changeVector :: PrimMonad m => VM.MVector (PrimState m) a -> Int -> (a -> a) -> 
 changeVector v i f = VM.read v i >>= (VM.write v i . f)
 
 
-display :: VTK -> DisplayCallback
-display vtk = do
+display :: VTK -> VertexNormals -> DisplayCallback
+display (VTK { polygons, vertices }) vertexNormals = do
   clear [ColorBuffer, DepthBuffer]
   putStrLn "display"
-
-  let VTK { vertices, polygons } = vtk
-
-  let vertexNormals = create $ do
-        normalSums <- VM.replicate (V.length vertices) mempty
-        V.forM_ polygons $ \(Input.Polygon p) -> do
-          let a = vertices ! (p ! 0)
-              b = vertices ! (p ! 1)
-              c = vertices ! (p ! 2)
-              n = vnormal $ cross (b +-+ a) (c +-+ a)
-          V.forM_ p $ \iVertex ->
-            changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk
-        return normalSums
-
-  putStrLn "draw"
-  -- TODO normalize vertexNormals?
 
   V.forM_ polygons $ \(Input.Polygon p) -> renderPrimitive GL.Polygon $ do
     V.forM_ p $ \iVertex -> do
@@ -74,6 +58,7 @@ display vtk = do
       vertex (Vertex3 (realToFrac v1) (realToFrac v2) (realToFrac v3) :: Vertex3 GLdouble)
 
   flush
+  putStrLn "drawing done"
 
   {-
   -- for all polygons
@@ -113,14 +98,31 @@ keyboard key (Position _x _y) = case key of
   c      -> putStrLn $ "key code " ++ show c
 
 
-specialKeyboard :: VTK -> SpecialCallback
-specialKeyboard vtk key (Position _x _y) = case key of
+specialKeyboard :: VTK -> VertexNormals -> SpecialCallback
+specialKeyboard vtk vertexNormals key (Position _x _y) = case key of
   KeyLeft -> do
     matrixMode $= Projection
     -- loadIdentity
     rotate (- 5.0) (Vector3 0 1 0 :: Vector3 GLfloat)
-    display vtk
+    display vtk vertexNormals
   c       -> putStrLn $ "special key code " ++ show c
+
+
+type VertexNormals = V.Vector Input.Vertex
+
+calculateVertexNormals :: VTK -> VertexNormals
+calculateVertexNormals VTK { vertices, polygons } = create $ do
+  normalSums <- VM.replicate (V.length vertices) mempty
+  V.forM_ polygons $ \(Input.Polygon p) -> do
+    let a = vertices ! (p ! 0)
+        b = vertices ! (p ! 1)
+        c = vertices ! (p ! 2)
+        n = vnormal $ cross (b +-+ a) (c +-+ a)
+    V.forM_ p $ \iVertex ->
+      changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk
+  return normalSums
+
+  -- TODO normalize vertexNormals?
 
 
 initGraphics :: String -> [String] -> VTK -> IO ()
@@ -139,11 +141,13 @@ initGraphics progName args vtk = do
   -- Initialize OpenGL
   initGL
 
+  let vertexNormals = calculateVertexNormals vtk
+
   -- Initialize callback functions
-  displayCallback $= display vtk
+  displayCallback $= display vtk vertexNormals
   reshapeCallback $= Just reshape
   keyboardCallback $= Just keyboard
-  specialCallback $= Just (specialKeyboard vtk)
+  specialCallback $= Just (specialKeyboard vtk vertexNormals)
 
   -- Start renderingdisplay
   mainLoop
