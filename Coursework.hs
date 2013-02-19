@@ -3,6 +3,7 @@
 import           Control.Applicative
 import           Control.Monad.Primitive
 import           Data.Attoparsec.Text as A
+import           Data.IORef
 import           Data.Monoid
 import qualified Data.Text.IO as Text
 import qualified Data.Vector as V
@@ -27,14 +28,14 @@ initGL = do
   -- Enable lighting
   lighting        $= Enabled
   light (Light 0) $= Enabled
-  position (Light 0) $= Vertex4 0 1 0 0
+  position (Light 0) $= Vertex4 1 1 1 0
   -- ambient  (Light 0) $= Color4 0 1 0 0
   -- diffuse  (Light 0) $= Color4 0 1 0 0
   -- specular (Light 0) $= Color4 0 1 0 0
 
   -- Set material parameters
-  materialSpecular  FrontAndBack $= Color4 1 0 0 0
-  materialShininess FrontAndBack $= 1
+  -- materialSpecular  FrontAndBack $= Color4 1 0 0 0
+  -- materialShininess FrontAndBack $= 0.6
 
   -- Enable Z-buffering
   -- equivalent of glEnable(GL_DEPTH_TEST)
@@ -51,14 +52,16 @@ display (VTK { polygons, vertices }) vertexNormals = do
   clear [ColorBuffer, DepthBuffer]
   putStrLn "display"
 
+  -- TODO don't draw the thing from a different angle, just rotate the world after drawing once?
   V.forM_ polygons $ \(Input.Polygon p) -> renderPrimitive GL.Polygon $ do
     U.forM_ p $ \iVertex -> do
-      let Vertex v1 v2 v3 = vertices      ! iVertex
-      let Vertex n1 n2 n3 = vertexNormals ! iVertex
+      let Vertex v1 v2 v3 =          vertices      ! iVertex
+      let Vertex n1 n2 n3 = vnormal (vertexNormals ! iVertex)
       normal (Normal3 (realToFrac n1) (realToFrac n2) (realToFrac n3) :: Normal3 GLdouble)
       vertex (Vertex3 (realToFrac v1) (realToFrac v2) (realToFrac v3) :: Vertex3 GLdouble)
 
   flush
+  -- swapBuffers
   putStrLn "drawing done"
 
   {-
@@ -77,20 +80,13 @@ display (VTK { polygons, vertices }) vertexNormals = do
   -}
 
 
-reshape :: ReshapeCallback
-reshape size = do
+reshape :: VTK -> Vertex3 GLdouble -> IORef Input.Vertex -> ReshapeCallback
+reshape vtk core eyeRef size = do
   putStrLn "reshape"
 
   viewport $= (Position 0 0, size)
 
-  {-
-  matrixMode $= Projection
-  loadIdentity
-  perspective fovy aspect near far
-  matrixMode $= Modelview 0 -- vertex unit 0 correct here?
-  loadIdentity
-  lookAt (Vertex3 eyex eyey eyez) (Vertex3 centerx centery centerz) (Vector3 upx upy upz)
-  -}
+  transform core eyeRef
 
 
 keyboard :: KeyboardCallback
@@ -99,14 +95,39 @@ keyboard key (Position _x _y) = case key of
   c      -> putStrLn $ "key code " ++ show c
 
 
-specialKeyboard :: VTK -> VertexNormals -> SpecialCallback
-specialKeyboard vtk vertexNormals key (Position _x _y) = case key of
-  KeyLeft -> do
-    matrixMode $= Projection
-    -- loadIdentity
-    rotate (- 5.0) (Vector3 0 1 0 :: Vector3 GLfloat)
-    display vtk vertexNormals
-  c       -> putStrLn $ "special key code " ++ show c
+specialKeyboard :: VTK -> Vertex3 GLdouble -> IORef Input.Vertex -> SpecialCallback
+specialKeyboard vtk core eyeRef key (Position _x _y) = do
+  case key of
+    KeyDown -> modifyIORef eyeRef (+++ Vertex 2 0 0)
+    KeyUp   -> modifyIORef eyeRef (+++ Vertex (-2) 0 0)
+    -- KeyLeft -> modifyIORef eyeRef (+++ Vertex 0 2 0)
+    -- KeyRight -> modifyIORef eyeRef (+++ Vertex 0 (-2) 0)
+    KeyLeft -> modifyIORef eyeRef (+++ Vertex 0 0 2)
+    KeyRight -> modifyIORef eyeRef (+++ Vertex 0 0 (-2))
+
+    c       -> putStrLn $ "special key code " ++ show c
+
+  transform core eyeRef
+  postRedisplay Nothing
+
+
+transform :: Vertex3 GLdouble -> IORef Input.Vertex -> IO ()
+transform core eyeRef = do
+
+  eye@(Vertex eyex eyey eyez) <- readIORef eyeRef
+
+  putStrLn $ "KeyLeft " ++ show eye
+
+  let f = realToFrac
+
+  matrixMode $= Projection
+  loadIdentity
+  perspective 2 2 1 200
+
+  matrixMode $= Modelview 0
+  loadIdentity
+  lookAt (Vertex3 (f eyex) (f eyey) (f eyez)) core (Vector3 0 1 0)
+
 
 
 type VertexNormals = U.Vector Input.Vertex
@@ -122,8 +143,6 @@ calculateVertexNormals VTK { vertices, polygons } = U.create $ do
     U.forM_ p $ \iVertex ->
       changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk
   return normalSums
-
-  -- TODO normalize vertexNormals?
 
 
 initGraphics :: String -> [String] -> VTK -> IO ()
@@ -144,11 +163,19 @@ initGraphics progName args vtk = do
 
   let vertexNormals = calculateVertexNormals vtk
 
+  -- Average center vertex
+  let VTK { vertices } = vtk
+      num  = fromIntegral (U.length vertices)
+      Vertex a b c = (/ num) `vmap` (U.foldl' (+++) mempty vertices)
+      f = realToFrac
+      core = Vertex3 (f a) (f b) (f c)
+  eyeRef <- newIORef (Vertex 10 0 0)
+
   -- Initialize callback functions
   displayCallback $= display vtk vertexNormals
-  reshapeCallback $= Just reshape
+  reshapeCallback $= Just (reshape vtk core eyeRef)
   keyboardCallback $= Just keyboard
-  specialCallback $= Just (specialKeyboard vtk vertexNormals)
+  specialCallback $= Just (specialKeyboard vtk core eyeRef)
 
   -- Start renderingdisplay
   mainLoop
