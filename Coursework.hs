@@ -1,8 +1,18 @@
-import           Control.Monad
+{-# LANGUAGE NamedFieldPuns #-}
+
+import           Control.Applicative
+import           Control.Monad.Primitive
+import           Data.Attoparsec.Text as A
+import           Data.Monoid
+import qualified Data.Text.IO as Text
+import           Data.Vector as V
+import qualified Data.Vector.Mutable as VM
 import           Graphics.Rendering.OpenGL.GL
-import           Graphics.UI.GLUT
+import           Graphics.UI.GLUT as GL
 import           System.Environment
 import           System.Exit
+
+import           Parsing as Input
 
 
 initGL :: IO ()
@@ -32,10 +42,38 @@ initGL = do
   -}
 
 
-display :: DisplayCallback
-display = do
+changeVector :: PrimMonad m => VM.MVector (PrimState m) a -> Int -> (a -> a) -> m ()
+changeVector v i f = VM.read v i >>= (VM.write v i . f)
+
+
+display :: VTK -> DisplayCallback
+display vtk = do
   clear [ColorBuffer, DepthBuffer]
   putStrLn "display"
+
+  let VTK { vertices, polygons } = vtk
+
+  let vertexNormals = create $ do
+        normalSums <- VM.replicate (V.length vertices) mempty
+        V.forM_ polygons $ \(Input.Polygon p) -> do
+          let a = vertices ! (p ! 0)
+              b = vertices ! (p ! 1)
+              c = vertices ! (p ! 2)
+              n = vnormal $ cross (b +-+ a) (c +-+ a)
+          V.forM_ p $ \iVertex ->
+            changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk
+        return normalSums
+
+  -- TODO normalize vertexNormals?
+
+  V.forM_ polygons $ \(Input.Polygon p) -> renderPrimitive GL.Polygon $ do
+    V.forM_ p $ \iVertex -> do
+      let Vertex v1 v2 v3 = vertices      ! iVertex
+      let Vertex n1 n2 n3 = vertexNormals ! iVertex
+      normal (Normal3 (realToFrac n1) (realToFrac n2) (realToFrac n3) :: Normal3 GLdouble)
+      vertex (Vertex3 (realToFrac v1) (realToFrac v2) (realToFrac v3) :: Vertex3 GLdouble)
+
+  flush
 
   {-
   -- for all polygons
@@ -75,8 +113,8 @@ keyboard key (Position _x _y) = case key of
   _      -> return ()
 
 
-initGraphics :: String -> [String] -> IO ()
-initGraphics progName args = do
+initGraphics :: String -> [String] -> VTK -> IO ()
+initGraphics progName args vtk = do
   initialDisplayCapabilities $= [ With DisplaySingle, -- or double buffering: DisplayDouble
                                   With DisplayRGB,
                                   With DisplayDepth ]
@@ -92,17 +130,21 @@ initGraphics progName args = do
   initGL
 
   -- Initialize callback functions
-  displayCallback $= display
+  displayCallback $= display vtk
   reshapeCallback $= Just reshape
   keyboardCallback $= Just keyboard
 
-  -- Start rendering
+  -- Start renderingdisplay
   mainLoop
 
 
 main :: IO ()
 main = do
-  args <- getArgs
+  args     <- getArgs
   progName <- getProgName
 
-  initGraphics progName args
+  parsedVtk <- parse vtkParser <$> Text.getContents
+
+  case parsedVtk of
+    Done _ vtk -> initGraphics progName args vtk
+    _          -> error "could not parse vtk"
