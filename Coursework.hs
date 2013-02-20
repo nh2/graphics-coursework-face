@@ -1,6 +1,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
 import           Control.Applicative
+import           Control.Monad
 import           Control.Monad.Primitive
 import           Data.Attoparsec.Text as A
 import           Data.IORef
@@ -63,7 +64,6 @@ display (VTK { polygons, vertices }) vertexNormals = do
       let Vertex n1 n2 n3 = vnormal (vertexNormals ! iVertex)
       normal (Normal3 (realToFrac n1) (realToFrac n2) (realToFrac n3) :: Normal3 GLdouble)
       vertex (Vertex3 (realToFrac v1) (realToFrac v2) (realToFrac v3) :: Vertex3 GLdouble)
-
   flush
   -- swapBuffers
   putStrLn "drawing done"
@@ -78,24 +78,22 @@ reshape state size = do
   transform state
 
 
-keyboard :: KeyboardCallback
-keyboard key (Position _x _y) = case key of
-  '\ESC' -> exitSuccess
-  c      -> putStrLn $ "key code " ++ show c
+keyboardMouse :: State -> KeyboardMouseCallback
+keyboardMouse state@State { horizAngleVar, vertAngleVar, distanceVar } key keyState _mods (Position _x _y) = do
+  when (keyState == Down) $ case key of
+    SpecialKey KeyLeft  -> horizAngleVar $~! (+    2 *deg ) >> redraw
+    SpecialKey KeyRight -> horizAngleVar $~! (+ (- 2 *deg)) >> redraw
+    SpecialKey KeyUp    -> vertAngleVar  $~! (+    2 *deg ) >> redraw
+    SpecialKey KeyDown  -> vertAngleVar  $~! (+ (- 2 *deg)) >> redraw
 
+    MouseButton WheelUp   -> distanceVar $~! (+ (- 5)) >> redraw
+    MouseButton WheelDown -> distanceVar $~! (+    5 ) >> redraw
 
-specialKeyboard :: State -> SpecialCallback
-specialKeyboard state@State { horizAngleVar, vertAngleVar } key (Position _x _y) = do
-  case key of
-    KeyLeft  -> horizAngleVar $~! (+    2 *deg )
-    KeyRight -> horizAngleVar $~! (+ (- 2 *deg))
-    KeyUp    -> vertAngleVar  $~! (+    2 *deg )
-    KeyDown  -> vertAngleVar  $~! (+ (- 2 *deg))
+    Char '\ESC' -> exitSuccess
 
-    c        -> putStrLn $ "special key code " ++ show c
-
-  transform state
-  postRedisplay Nothing
+    k -> putStrLn $ "unhandled key pressed: " ++ show k
+  where
+    redraw = transform state >> postRedisplay Nothing
 
 
 transform :: State -> IO ()
@@ -162,8 +160,7 @@ initGraphics progName args vtk = do
   -- Initialize callback functions
   displayCallback $= display vtk vertexNormals
   reshapeCallback $= Just (reshape state)
-  keyboardCallback $= Just keyboard
-  specialCallback $= Just (specialKeyboard state)
+  keyboardMouseCallback $= Just (keyboardMouse state)
 
   -- Start renderingdisplay
   mainLoop
