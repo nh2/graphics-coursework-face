@@ -174,7 +174,7 @@ initGraphics progName args vtk = do
   -- Initialize OpenGL
   initGL
 
-  let vertexNormals = calculateVertexNormals vtk
+  vertexNormals <- return $ calculateVertexNormals vtk
 
   -- Average center vertex
   let VTK { vertices } = vtk
