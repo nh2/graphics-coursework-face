@@ -50,8 +50,8 @@ initGL = do
 
   -- Enable Z-buffering
   -- equivalent of glEnable(GL_DEPTH_TEST)
-  -- depthMask $= Enabled
-  -- depthFunc $= Just Lequal
+  depthMask $= Enabled
+  depthFunc $= Just Lequal
 
 
 {-# INLINE changeVector #-}
@@ -134,9 +134,11 @@ transform State { horizAngleVar, vertAngleVar, distanceVar, centerVar } = do
                                    (d * sin vertAngle )
                                    (d * cos horizAngle)
 
+  Size w h <- get windowSize
+
   matrixMode $= Projection
   loadIdentity
-  perspective 1 2 1 200
+  perspective 1 (fromIntegral w / fromIntegral h) 1 200
 
   matrixMode $= Modelview 0
   loadIdentity
