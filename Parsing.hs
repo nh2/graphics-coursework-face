@@ -17,7 +17,6 @@ import qualified Data.Vector.Generic.Mutable
 import Data.Vector.Unboxed.Deriving
 
 
--- TODO ! and unbox
 data Vertex = Vertex {-# UNPACK #-} !Double {-# UNPACK #-} !Double {-# UNPACK #-} !Double deriving (Eq, Show)
 data Polygon = Polygon (U.Vector Int) deriving (Eq, Show)
 data TextureCoordinate = TextureCoordinate Double Double deriving (Eq, Show)
@@ -62,20 +61,26 @@ data VTK = VTK
 -- | Parses the contents of a .vtk file into a VTK data structure.
 vtkParser :: Parser VTK
 vtkParser = do
+
   -- Parse header
   _ <- "# vtk DataFile Version 3.0" *> endl
   desc <- endl <* ("ASCII" *> endl *> "DATASET POLYDATA" *> endl)
+
   -- Parse points
   nPoints <- "POINTS " .*> decimal <*. " float" <* endl
   verts <- U.replicateM nPoints (vertexParser <* skipSpace)
+
   -- Parse polygons
   nPolys <- "POLYGONS " .*> decimal <* endl
   polys <- V.replicateM nPolys (polygonParser <* endl)
+
   -- Parse texture coordinates
   nTextures <- "POINT_DATA " *> decimal <* endl
+
   _ <- endl -- TEXTURE COORDINATES line
   when (nTextures /= nPoints) $ error "number of textures and points mismatch"
   texts <- V.replicateM nTextures textureCoordParser
+
   -- Done
   return $ VTK desc verts polys texts
   where
