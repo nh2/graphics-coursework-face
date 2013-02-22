@@ -9,6 +9,7 @@
 import           Control.Applicative
 import           Control.Monad
 import           Data.Attoparsec.Text as A
+import qualified Data.ByteString as BS
 import           Data.IORef
 import           Data.Monoid
 import qualified Data.Text.IO as Text
@@ -27,7 +28,6 @@ import           System.Environment
 import           System.Exit
 
 import           Parsing as Input
-import qualified Data.ByteString as BS
 
 
 {-# INLINE deg #-}

@@ -1,0 +1,43 @@
+Submission Notes
+----------------
+
+I wrote the whole assignment in Haskell (after asking for permission).
+
+Haskell's OpenGL binding is a direct mapping to the underlying C library,
+which is why my code is almost a line-by-line translation of the equivalent
+C code.
+
+In addition to the required tasks I added a small command-line parser and the possibility to rotate the face using the keyboard and the mouse (click-and-drag). The view can be scrolled with the mouse wheel.
+
+I wrote a full Haskell library to read PPM files and publshed it on Hackage:
+
+    http://hackage.haskell.org/package/netpbm
+    https://github.com/nh2/haskell-netpbm
+
+Therefore my PPM parsing code is not included in the submission; it depends on it using Haskell's package database.
+
+
+Running my code
+---------------
+
+You can compile and run the code with:
+
+    cabal install --only dependencies
+    cabal configure
+    cabal build
+    ./dist/build/coursework/coursework /PATH/TO/face.vtk /PATH/TO/face.ppm
+
+or alternatively by installing the dependencies in the cabal file manually and running
+
+    ghc --make -O2 Coursework.hs
+    ./Coursework
+
+If you have problems compiling it, I am glad to do it for you or demo my code in labs.
+
+I also put a runnable binary into
+
+    /homes/nh910/public_html/graphics-coursework-face /homes/nh910/public_html/face.vtk /homes/nh910/public_html/face.ppm
+
+Thanks for this task, it was fun!
+
+Niklas
