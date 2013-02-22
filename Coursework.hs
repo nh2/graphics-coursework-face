@@ -7,6 +7,7 @@
 -- module Main where
 
 import           Control.Applicative
+import           Control.Monad
 import           Control.Monad.Primitive
 import           Data.Attoparsec.Text as A
 import           Data.IORef
@@ -85,8 +86,8 @@ display (VTK { polygons, vertices, textures }) vertexNormals = do
 
   V.forM_ polygons $ \(Input.Polygon p) -> renderPrimitive GL.Polygon $ do
     U.forM_ p $ \iVertex -> do
-      let Vertex v1 v2 v3 =          vertices      ! iVertex
-      let Vertex n1 n2 n3 = vnormal (vertexNormals ! iVertex)
+      let Vertex v1 v2 v3 = vertices      ! iVertex
+      let Vertex n1 n2 n3 = vertexNormals ! iVertex
       normal (Normal3 (realToFrac n1) (realToFrac n2) (realToFrac n3) :: Normal3 GLdouble)
       vertex (Vertex3 (realToFrac v1) (realToFrac v2) (realToFrac v3) :: Vertex3 GLdouble)
 
@@ -171,9 +172,11 @@ transform State { horizAngleVar, vertAngleVar, distanceVar, centerVar } = do
   lookAt eye center (Vector3 0 1 0)
 
 
+-- | Calculates the average normal vector on each vector (normalized to length 1).
 calculateVertexNormals :: VTK -> VertexNormals
 calculateVertexNormals VTK { vertices, polygons } = U.create $ do
-  normalSums <- VUM.replicate (U.length vertices) mempty
+  let nVertices = U.length vertices
+  normalSums <- VUM.replicate nVertices mempty
   V.forM_ polygons $ \(Input.Polygon p) -> do
     -- Take the first 3 points of the polygon, (a, b, c), to calculat the normal on the polygon.
     let a = vertices ! (p ! 0)
@@ -182,11 +185,14 @@ calculateVertexNormals VTK { vertices, polygons } = U.create $ do
         n = vnormal $ cross (b +-+ a) (c +-+ a)
     -- Add the polygon normal to the sum of normals for each vertex in the polygon.
     U.forM_ p $ \iVertex ->
-      changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk?
+      changeVector normalSums (+++ n) iVertex -- TODO deepseq mappend thunk?
+  -- Normalize each vertex normal to length 1.
+  mapChangeVector normalSums vnormal
   return normalSums
   where
-    -- Change a mutable vector at the given index.
-    changeVector v i f = VUM.read v i >>= (VUM.write v i . f)
+    -- Change a mutable vector at the given index / at all indices.
+    changeVector v f i = VUM.read v i >>= (VUM.write v i . f)
+    mapChangeVector v f = forM_ [0..VUM.length v - 1] $ changeVector v f
 
 
 
