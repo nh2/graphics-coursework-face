@@ -138,7 +138,7 @@ transform State { horizAngleVar, vertAngleVar, distanceVar, centerVar } = do
 
   matrixMode $= Projection
   loadIdentity
-  perspective 1 (fromIntegral w / fromIntegral h) 1 200
+  perspective (30 *deg) (fromIntegral w / fromIntegral h) 1 200
 
   matrixMode $= Modelview 0
   loadIdentity
