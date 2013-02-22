@@ -13,15 +13,21 @@ import           Data.IORef
 import           Data.Monoid
 import qualified Data.Text.IO as Text
 import qualified Data.Vector as V
+import qualified Data.Vector.Storable as VS
+import           Data.Vector.Storable (convert)
 import qualified Data.Vector.Unboxed as U
 import           Data.Vector.Unboxed ((!))
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Graphics.Rendering.OpenGL.GL
+import           Graphics.Netpbm
 import           Graphics.UI.GLUT as GL
+import qualified Options.Applicative as Args
+import           Options.Applicative (argument, str, metavar, info, fullDesc)
 import           System.Environment
 import           System.Exit
 
 import           Parsing as Input
+import qualified Data.ByteString as BS
 
 
 {-# INLINE deg #-}
@@ -53,6 +59,9 @@ initGL = do
   depthMask $= Enabled
   depthFunc $= Just Lequal
 
+  -- Enable texturing
+  texture Texture2D $= Enabled
+
 
 {-# INLINE changeVector #-}
 changeVector :: (VUM.Unbox a, PrimMonad m) => VUM.MVector (PrimState m) a -> Int -> (a -> a) -> m ()
@@ -60,17 +69,19 @@ changeVector v i f = VUM.read v i >>= (VUM.write v i . f)
 
 
 display :: VTK -> VertexNormals -> DisplayCallback
-display (VTK { polygons, vertices }) vertexNormals = do
+display (VTK { polygons, vertices, textures }) vertexNormals = do
   clear [ColorBuffer, DepthBuffer]
   putStrLn "display"
 
-  -- TODO don't draw the thing from a different angle, just rotate the world after drawing once?
   V.forM_ polygons $ \(Input.Polygon p) -> renderPrimitive GL.Polygon $ do
     U.forM_ p $ \iVertex -> do
       let Vertex v1 v2 v3 =          vertices      ! iVertex
       let Vertex n1 n2 n3 = vnormal (vertexNormals ! iVertex)
       normal (Normal3 (realToFrac n1) (realToFrac n2) (realToFrac n3) :: Normal3 GLdouble)
       vertex (Vertex3 (realToFrac v1) (realToFrac v2) (realToFrac v3) :: Vertex3 GLdouble)
+
+      let TextureCoordinate x y = textures V.! iVertex
+      texCoord (TexCoord2 (realToFrac x) (realToFrac y) :: TexCoord2 GLfloat)
   flush
   -- swapBuffers
   putStrLn "drawing done"
@@ -154,12 +165,12 @@ calculateVertexNormals VTK { vertices, polygons } = U.create $ do
         c = vertices ! (p ! 2)
         n = vnormal $ cross (b +-+ a) (c +-+ a)
     U.forM_ p $ \iVertex ->
-      changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk
+      changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk?
   return normalSums
 
 
-initGraphics :: String -> [String] -> VTK -> IO ()
-initGraphics progName args vtk = do
+initGraphics :: String -> [String] -> VTK -> PPM -> IO ()
+initGraphics progName args vtk ppm = do
   initialDisplayCapabilities $= [ With DisplaySingle, -- or double buffering: DisplayDouble
                                   With DisplayRGB,
                                   With DisplayDepth ]
@@ -196,7 +207,24 @@ initGraphics progName args vtk = do
   keyboardMouseCallback $= Just (keyboardMouse state)
   motionCallback        $= Just (mouseMotion   state)
 
-  -- Start renderingdisplay
+  -- Bind texture
+  let PPM { ppmWidth, ppmHeight, ppmData } = ppm
+      -- Convert pixel vector to a Vector.Storable vector from which we can get a pointer for OpeGL
+      storableVec = case ppmData of
+                      PpmPixelDataRGB8 pixelVector -> convert pixelVector
+                      _                            -> error "can only load 8-bits-per-color textures"
+      textureSize = TextureSize2D (fromIntegral ppmWidth) (fromIntegral ppmHeight)
+
+  textureBinding Texture2D $= Nothing
+  textureWrapMode Texture2D S $= (Repeated, Repeat)
+  textureWrapMode Texture2D Q $= (Repeated, Repeat)
+  textureFunction $= Modulate
+  textureFilter Texture2D $= ((Linear', Nothing), Linear') -- simple GL_LINEAR
+
+  VS.unsafeWith storableVec $ \pixelPtr ->
+    texImage2D Nothing NoProxy 0 RGB' textureSize 0 (PixelData RGB UnsignedByte pixelPtr)
+
+  -- Start rendering
   mainLoop
 
 
@@ -211,13 +239,35 @@ data State = State
   }
 
 
+data Args = Args {
+  vtkPath     :: String
+, texturePath :: String
+}
+
+argsParser :: Args.Parser Args
+argsParser = Args <$> argument str (metavar "VTK_FILE")
+                  <*> argument str (metavar "TEXTURE_PPM_FILE")
+
+
 main :: IO ()
 main = do
-  args     <- getArgs
   progName <- getProgName
 
-  parsedVtk <- parse vtkParser <$> Text.getContents
+  -- Parse arguments
+  Args { vtkPath, texturePath } <- Args.execParser (info argsParser fullDesc)
 
-  case parsedVtk of
-    Done _ vtk -> initGraphics progName args vtk
-    _          -> error "could not parse vtk"
+  -- Load points, polygon, texture coordinates from VTK file
+  parsedVtk <- parse vtkParser <$> Text.readFile vtkPath
+
+  vtk <- case maybeResult parsedVtk of
+    Nothing  -> error "could not parse vtk"
+    Just vtk -> return vtk
+
+  -- Load texture from PPM file
+  parsedPpm <- parsePPM <$> BS.readFile texturePath
+
+  ppm <- case parsedPpm of
+    Left _           -> error "could not parse ppm"
+    Right (ppm:_, _) -> return ppm
+
+  initGraphics progName [] vtk ppm
