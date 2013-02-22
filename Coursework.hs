@@ -8,7 +8,6 @@
 
 import           Control.Applicative
 import           Control.Monad
-import           Control.Monad.Primitive
 import           Data.Attoparsec.Text as A
 import           Data.IORef
 import           Data.Monoid
@@ -79,10 +78,13 @@ type VertexNormals = U.Vector Input.Vertex
 
 
 -- | Called to render a full scene.
-display :: VTK -> VertexNormals -> DisplayCallback
-display (VTK { polygons, vertices, textures }) vertexNormals = do
+display :: State -> VTK -> VertexNormals -> DisplayCallback
+display state (VTK { polygons, vertices, textures }) vertexNormals = do
   clear [ColorBuffer, DepthBuffer]
   putStrLn "display"
+
+  -- Apply rotations of objects and camera
+  transform state
 
   V.forM_ polygons $ \(Input.Polygon p) -> renderPrimitive GL.Polygon $ do
     U.forM_ p $ \iVertex -> do
@@ -96,57 +98,6 @@ display (VTK { polygons, vertices, textures }) vertexNormals = do
   flush
   -- swapBuffers -- for double-buffering
   putStrLn "drawing done"
-
-
--- | Requests the scene to be redrawn with the given state.
-redraw :: State -> IO ()
-redraw state = transform state >> postRedisplay Nothing
-
-
--- | Called on window resize. Redraws automatically.
-reshape :: State -> ReshapeCallback
-reshape state size = do
-  putStrLn "reshape"
-
-  viewport $= (Position 0 0, size)
-
-  transform state
-
-
--- | Called when keyboard or mouse buttons are pressed.
-keyboardMouse :: State -> KeyboardMouseCallback
-keyboardMouse state@State { horizAngleVar, vertAngleVar, distanceVar, lastMouseDragPosVar } = on
-  where
-    on (SpecialKey KeyLeft)    Down _ _ = horizAngleVar $~! (+    2 *deg ) >> redraw state
-    on (SpecialKey KeyRight)   Down _ _ = horizAngleVar $~! (+ (- 2 *deg)) >> redraw state
-    on (SpecialKey KeyUp)      Down _ _ = vertAngleVar  $~! (+    2 *deg ) >> redraw state
-    on (SpecialKey KeyDown)    Down _ _ = vertAngleVar  $~! (+ (- 2 *deg)) >> redraw state
-
-    on (MouseButton WheelUp)   Down _ _ = distanceVar $~! (+ (- 5)) >> redraw state
-    on (MouseButton WheelDown) Down _ _ = distanceVar $~! (+    5 ) >> redraw state
-    on (MouseButton _)         Up   _ _ = lastMouseDragPosVar $= Nothing -- Reset drag on mouse up
-
-    on (Char '\ESC')           Down _ _ = exitSuccess
-
-    on k                       _    _ _ = putStrLn $ "unhandled key pressed: " ++ show k
-
-
--- | Called when the mouse is moved.
-mouseMotion :: State -> MotionCallback
-mouseMotion state@State { lastMouseDragPosVar, horizAngleVar, vertAngleVar } pos@(Position x y) = do
-  lastDragPos <- get lastMouseDragPosVar
-
-  -- Always calculate drag from *drag start position*
-  case lastDragPos of
-    Nothing               -> lastMouseDragPosVar $= Just pos
-    Just (Position lx ly) -> do
-
-      horizAngleVar $~! (+ fromIntegral (-(x - lx)) / 2 *deg)
-      vertAngleVar  $~! (+ fromIntegral (  y - ly ) / 2 *deg)
-
-      lastMouseDragPosVar $= Just pos
-
-      redraw state
 
 
 -- | Applies view transformation (scene rotation + camera).
@@ -170,6 +121,56 @@ transform State { horizAngleVar, vertAngleVar, distanceVar, centerVar } = do
   matrixMode $= Modelview 0
   loadIdentity
   lookAt eye center (Vector3 0 1 0)
+
+
+-- | Requests the scene to be redrawn with the given state.
+redraw :: IO ()
+redraw = postRedisplay Nothing
+
+
+-- | Called on window resize. Redraws automatically.
+reshape :: ReshapeCallback
+reshape size = do
+  putStrLn "reshape"
+
+  -- Apply new window size
+  viewport $= (Position 0 0, size)
+
+
+-- | Called when keyboard or mouse buttons are pressed.
+keyboardMouse :: State -> KeyboardMouseCallback
+keyboardMouse state@State { horizAngleVar, vertAngleVar, distanceVar, lastMouseDragPosVar } = on
+  where
+    on (SpecialKey KeyLeft)    Down _ _ = horizAngleVar $~! (+    2 *deg ) >> redraw
+    on (SpecialKey KeyRight)   Down _ _ = horizAngleVar $~! (+ (- 2 *deg)) >> redraw
+    on (SpecialKey KeyUp)      Down _ _ = vertAngleVar  $~! (+    2 *deg ) >> redraw
+    on (SpecialKey KeyDown)    Down _ _ = vertAngleVar  $~! (+ (- 2 *deg)) >> redraw
+
+    on (MouseButton WheelUp)   Down _ _ = distanceVar $~! (+ (- 5)) >> redraw
+    on (MouseButton WheelDown) Down _ _ = distanceVar $~! (+    5 ) >> redraw
+    on (MouseButton _)         Up   _ _ = lastMouseDragPosVar $= Nothing -- Reset drag on mouse up
+
+    on (Char '\ESC')           Down _ _ = exitSuccess
+
+    on k                       _    _ _ = putStrLn $ "unhandled key pressed: " ++ show k
+
+
+-- | Called when the mouse is moved.
+mouseMotion :: State -> MotionCallback
+mouseMotion State { lastMouseDragPosVar, horizAngleVar, vertAngleVar } pos@(Position x y) = do
+  lastDragPos <- get lastMouseDragPosVar
+
+  -- Always calculate drag from *drag start position*
+  case lastDragPos of
+    Nothing               -> lastMouseDragPosVar $= Just pos
+    Just (Position lx ly) -> do
+
+      horizAngleVar $~! (+ fromIntegral (-(x - lx)) / 2 *deg)
+      vertAngleVar  $~! (+ fromIntegral (  y - ly ) / 2 *deg)
+
+      lastMouseDragPosVar $= Just pos
+
+      redraw
 
 
 -- | Calculates the average normal vector on each vector (normalized to length 1).
@@ -230,8 +231,8 @@ initGraphics progName args vtk ppm = do
                  <*> newIORef Nothing   -- last mouse position
 
   -- Initialize input and rendering callback functions
-  displayCallback $= display vtk vertexNormals
-  reshapeCallback $= Just (reshape state)
+  displayCallback       $= display state vtk vertexNormals
+  reshapeCallback       $= Just reshape
   keyboardMouseCallback $= Just (keyboardMouse state)
   motionCallback        $= Just (mouseMotion   state)
 
