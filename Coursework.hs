@@ -63,11 +63,21 @@ initGL = do
   texture Texture2D $= Enabled
 
 
-{-# INLINE changeVector #-}
-changeVector :: (VUM.Unbox a, PrimMonad m) => VUM.MVector (PrimState m) a -> Int -> (a -> a) -> m ()
-changeVector v i f = VUM.read v i >>= (VUM.write v i . f)
+-- | The "global state" of the scene.
+data State = State
+  { horizAngleVar       :: IORef Double -- ^ Left/right rotation around the object
+  , vertAngleVar        :: IORef Double -- ^ Up/down rotation around the object
+  , distanceVar         :: IORef Double -- ^ View distance to the object
+  , centerVar           :: IORef (Vertex3 GLdouble) -- ^ Center ob the shown object. Targeted by camera.
+  , lastMouseDragPosVar :: IORef (Maybe Position)   -- ^ Last absolute mouse position in the window. Only set in a drag.
+  }
 
 
+-- | The normal vector on each vertex.
+type VertexNormals = U.Vector Input.Vertex
+
+
+-- | Called to render a full scene.
 display :: VTK -> VertexNormals -> DisplayCallback
 display (VTK { polygons, vertices, textures }) vertexNormals = do
   clear [ColorBuffer, DepthBuffer]
@@ -83,10 +93,16 @@ display (VTK { polygons, vertices, textures }) vertexNormals = do
       let TextureCoordinate x y = textures V.! iVertex
       texCoord (TexCoord2 (realToFrac x) (realToFrac y) :: TexCoord2 GLfloat)
   flush
-  -- swapBuffers
+  -- swapBuffers -- for double-buffering
   putStrLn "drawing done"
 
 
+-- | Requests the scene to be redrawn with the given state.
+redraw :: State -> IO ()
+redraw state = transform state >> postRedisplay Nothing
+
+
+-- | Called on window resize. Redraws automatically.
 reshape :: State -> ReshapeCallback
 reshape state size = do
   putStrLn "reshape"
@@ -96,10 +112,7 @@ reshape state size = do
   transform state
 
 
-redraw :: State -> IO ()
-redraw state = transform state >> postRedisplay Nothing
-
-
+-- | Called when keyboard or mouse buttons are pressed.
 keyboardMouse :: State -> KeyboardMouseCallback
 keyboardMouse state@State { horizAngleVar, vertAngleVar, distanceVar, lastMouseDragPosVar } = on
   where
@@ -117,6 +130,7 @@ keyboardMouse state@State { horizAngleVar, vertAngleVar, distanceVar, lastMouseD
     on k                       _    _ _ = putStrLn $ "unhandled key pressed: " ++ show k
 
 
+-- | Called when the mouse is moved.
 mouseMotion :: State -> MotionCallback
 mouseMotion state@State { lastMouseDragPosVar, horizAngleVar, vertAngleVar } pos@(Position x y) = do
   lastDragPos <- get lastMouseDragPosVar
@@ -134,6 +148,7 @@ mouseMotion state@State { lastMouseDragPosVar, horizAngleVar, vertAngleVar } pos
       redraw state
 
 
+-- | Applies view transformation (scene rotation + camera).
 transform :: State -> IO ()
 transform State { horizAngleVar, vertAngleVar, distanceVar, centerVar } = do
 
@@ -160,13 +175,19 @@ calculateVertexNormals :: VTK -> VertexNormals
 calculateVertexNormals VTK { vertices, polygons } = U.create $ do
   normalSums <- VUM.replicate (U.length vertices) mempty
   V.forM_ polygons $ \(Input.Polygon p) -> do
+    -- Take the first 3 points of the polygon, (a, b, c), to calculat the normal on the polygon.
     let a = vertices ! (p ! 0)
         b = vertices ! (p ! 1)
         c = vertices ! (p ! 2)
         n = vnormal $ cross (b +-+ a) (c +-+ a)
+    -- Add the polygon normal to the sum of normals for each vertex in the polygon.
     U.forM_ p $ \iVertex ->
       changeVector normalSums iVertex (+++ n) -- TODO deepseq mappend thunk?
   return normalSums
+  where
+    -- Change a mutable vector at the given index.
+    changeVector v i f = VUM.read v i >>= (VUM.write v i . f)
+
 
 
 initGraphics :: String -> [String] -> VTK -> PPM -> IO ()
@@ -185,6 +206,7 @@ initGraphics progName args vtk ppm = do
   -- Initialize OpenGL
   initGL
 
+  -- NOTE: Not using let here because then strange inlining recomputes this on *every* frame. GHC bug?
   vertexNormals <- return $ calculateVertexNormals vtk
 
   -- Average center vertex
@@ -201,13 +223,14 @@ initGraphics progName args vtk ppm = do
                  <*> newIORef center    -- the point around which we rotate ("center")
                  <*> newIORef Nothing   -- last mouse position
 
-  -- Initialize callback functions
+  -- Initialize input and rendering callback functions
   displayCallback $= display vtk vertexNormals
   reshapeCallback $= Just (reshape state)
   keyboardMouseCallback $= Just (keyboardMouse state)
   motionCallback        $= Just (mouseMotion   state)
 
-  -- Bind texture
+  {- Bind texture -}
+
   let PPM { ppmWidth, ppmHeight, ppmData } = ppm
       -- Convert pixel vector to a Vector.Storable vector from which we can get a pointer for OpeGL
       storableVec = case ppmData of
@@ -215,12 +238,14 @@ initGraphics progName args vtk ppm = do
                       _                            -> error "can only load 8-bits-per-color textures"
       textureSize = TextureSize2D (fromIntegral ppmWidth) (fromIntegral ppmHeight)
 
+  -- Apply texture settings
   textureBinding Texture2D $= Nothing
   textureWrapMode Texture2D S $= (Repeated, Repeat)
   textureWrapMode Texture2D Q $= (Repeated, Repeat)
   textureFunction $= Modulate
   textureFilter Texture2D $= ((Linear', Nothing), Linear') -- simple GL_LINEAR
 
+  -- Connect texture coordinates with pixel data
   VS.unsafeWith storableVec $ \pixelPtr ->
     texImage2D Nothing NoProxy 0 RGB' textureSize 0 (PixelData RGB UnsignedByte pixelPtr)
 
@@ -228,16 +253,7 @@ initGraphics progName args vtk ppm = do
   mainLoop
 
 
-type VertexNormals = U.Vector Input.Vertex
-
-data State = State
-  { horizAngleVar :: IORef Double
-  , vertAngleVar :: IORef Double
-  , distanceVar :: IORef Double
-  , centerVar :: IORef (Vertex3 GLdouble)
-  , lastMouseDragPosVar :: IORef (Maybe Position)
-  }
-
+-- * Command line argument parsing
 
 data Args = Args {
   vtkPath     :: String
@@ -249,6 +265,7 @@ argsParser = Args <$> argument str (metavar "VTK_FILE")
                   <*> argument str (metavar "TEXTURE_PPM_FILE")
 
 
+-- | Entry point of the program.
 main :: IO ()
 main = do
   progName <- getProgName
