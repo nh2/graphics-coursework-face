@@ -17,31 +17,45 @@ import qualified Data.Vector.Generic.Mutable
 import Data.Vector.Unboxed.Deriving
 
 
-data Vertex = Vertex {-# UNPACK #-} !Double {-# UNPACK #-} !Double {-# UNPACK #-} !Double deriving (Eq, Show)
+-- | A point in 3D space.
+data Vertex = Vertex {-# UNPACK #-} !Double
+                     {-# UNPACK #-} !Double
+                     {-# UNPACK #-} !Double deriving (Eq, Show)
+
+-- | A polygon in 3D space. Must be planar.
+-- Indices into a list of vertices, starting with 0.
 data Polygon = Polygon (U.Vector Int) deriving (Eq, Show)
+
+-- | A floating-point coordinate in a 2D texture.
 data TextureCoordinate = TextureCoordinate Double Double deriving (Eq, Show)
 
 
+-- Make vertices fit into packed vectors.
 derivingUnbox "Vertex"
     [t| Vertex -> (Double, Double, Double) |]
     [| \ (Vertex a b c) -> (a, b, c) |]
     [| \ (a, b, c) -> Vertex a b c |]
 
 
+-- Vertices have a zero-element (0,0,0) an an additive function (component-wise plus).
 instance Monoid Vertex where
   mempty = Vertex 0 0 0
   mappend = (+++)
 
 
+-- | Applies a function to all three components of the vertex.
 vmap :: (Double -> Double) -> Vertex -> Vertex
 vmap f (Vertex a b c) = Vertex (f a) (f b) (f c)
 
+-- | Euclidean norm / "length" of the vertex.
 vabs :: Vertex -> Double
 vabs (Vertex a b c) = sqrt (a*a + b*b + c*c)
 
+-- | Normalizes the vector to length 1.
 vnormal :: Vertex -> Vertex
 vnormal v = (/ vabs v) `vmap` v
 
+-- | Addition, substraction, cross product of vertices.
 (+++), (+-+), cross :: Vertex -> Vertex -> Vertex
 Vertex a b c   +++   Vertex x y z = Vertex (a+x) (b+y) (c+z)
 Vertex a b c   +-+   Vertex x y z = Vertex (a-x) (b-y) (c-z)
@@ -50,6 +64,7 @@ Vertex a b c `cross` Vertex x y z = Vertex (b * z - c * y)
                                            (a * y - b * x)
 
 
+-- | The data contained in a VTK file.
 data VTK = VTK
   { description :: Text
   , vertices :: U.Vector Vertex
@@ -84,10 +99,11 @@ vtkParser = do
   -- Done
   return $ VTK desc verts polys texts
   where
+    -- Eat input until the end of line. Consumes but discards the end of line.
     endl = takeTill isEndOfLine <* endOfLine
-    sd = signed double <* skipSpace
+    sd = signed double <* skipSpace -- A signed double. Discards trailing whitespace.
 
-    -- How to parse single Vertices, Polygons, texture coordinates
+    -- How to parse single Vertices, Polygons, texture coordinates.
     vertexParser = Vertex <$> sd <*> sd <*> sd
     polygonParser = do
       size <- decimal
