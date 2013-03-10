@@ -278,7 +278,7 @@ main = do
   progName <- getProgName
 
   -- Parse arguments
-  Args { vtkPath, texturePath } <- Args.execParser (info argsParser fullDesc)
+  Args { vtkPath, texturePath } <- Args.execParser (info (helper <*> argsParser) fullDesc)
 
   -- Load points, polygon, texture coordinates from VTK file
   parsedVtk <- parse vtkParser <$> Text.readFile vtkPath
