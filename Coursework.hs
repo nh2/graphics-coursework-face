@@ -24,6 +24,7 @@ import           Graphics.Netpbm
 import           Graphics.UI.GLUT as GL
 import qualified Options.Applicative as Args
 import           Options.Applicative (argument, str, metavar, info, fullDesc)
+import           Options.Applicative.Extra (helper)
 import           System.Environment
 import           System.Exit
 
@@ -238,7 +239,7 @@ initGraphics progName args vtk ppm = do
 
   {- Bind texture -}
 
-  let PPM { ppmWidth, ppmHeight, ppmData } = ppm
+  let PPM { ppmHeader = PPMHeader{ ppmWidth, ppmHeight }, ppmData } = ppm
       -- Convert pixel vector to a Vector.Storable vector from which we can get a pointer for OpeGL
       storableVec = case ppmData of
                       PpmPixelDataRGB8 pixelVector -> convert pixelVector
@@ -254,7 +255,7 @@ initGraphics progName args vtk ppm = do
 
   -- Connect texture coordinates with pixel data
   VS.unsafeWith storableVec $ \pixelPtr ->
-    texImage2D Nothing NoProxy 0 RGB' textureSize 0 (PixelData RGB UnsignedByte pixelPtr)
+    texImage2D Texture2D NoProxy 0 RGB' textureSize 0 (PixelData RGB UnsignedByte pixelPtr)
 
   -- Start rendering
   mainLoop
