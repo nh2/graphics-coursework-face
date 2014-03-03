@@ -140,7 +140,7 @@ reshape size = do
 
 -- | Called when keyboard or mouse buttons are pressed.
 keyboardMouse :: State -> KeyboardMouseCallback
-keyboardMouse state@State { horizAngleVar, vertAngleVar, distanceVar, lastMouseDragPosVar } = on
+keyboardMouse State { horizAngleVar, vertAngleVar, distanceVar, lastMouseDragPosVar } = on
   where
     on (SpecialKey KeyLeft)    Down _ _ = horizAngleVar $~! (+    2 *deg ) >> redraw
     on (SpecialKey KeyRight)   Down _ _ = horizAngleVar $~! (+ (- 2 *deg)) >> redraw
@@ -293,6 +293,7 @@ main = do
 
   ppm <- case parsedPpm of
     Left _           -> error "could not parse ppm"
+    Right ([], _)    -> error "there is no picture in the PPM file"
     Right (ppm:_, _) -> return ppm
 
   initGraphics progName [] vtk ppm
